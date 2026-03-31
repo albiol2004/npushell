@@ -23,19 +23,46 @@ Your workflow is **never blocked** — suggestions arrive asynchronously.
 
 ## Requirements
 
-- Rust toolchain (for building)
-- A local LLM server with an OpenAI-compatible API (e.g., [lemonade-server](https://github.com/onnx/turnkeyml))
+- A local LLM server with an OpenAI-compatible API (e.g., [lemonade-server](https://github.com/onnx/turnkeyml), [ollama](https://ollama.com), llama.cpp, vLLM)
 - Bash or Zsh
+- Linux (x86_64 or aarch64)
 
 ## Installation
 
+### Quick install (prebuilt binary)
+
 ```bash
-git clone https://github.com/YOUR_USER/npushell
-cd npushell
-make install
+# x86_64
+curl -L https://github.com/albiol2004/npushell/releases/latest/download/npushell-x86_64-unknown-linux-gnu -o ~/.local/bin/npushell
+chmod +x ~/.local/bin/npushell
+
+# aarch64 (Raspberry Pi, etc.)
+curl -L https://github.com/albiol2004/npushell/releases/latest/download/npushell-aarch64-unknown-linux-gnu -o ~/.local/bin/npushell
+chmod +x ~/.local/bin/npushell
 ```
 
-Then add to your shell config:
+Then run the setup wizard:
+
+```bash
+npushell init
+```
+
+This creates the config file and installs shell hooks automatically.
+
+### Build from source
+
+```bash
+git clone https://github.com/albiol2004/npushell
+cd npushell
+make install
+npushell init
+```
+
+Requires the Rust toolchain.
+
+### Manual hook setup (if you skip `init`)
+
+Add to your shell config:
 
 ```bash
 # For bash (~/.bashrc):
@@ -87,8 +114,10 @@ Create `~/.config/npushell/config.toml`:
 ```toml
 [api]
 endpoint = "http://localhost:8000"
+# API path prefix ("/v1" for most servers, "/api/v1" for lemonade-server)
+api_path = "/v1"
 model = "default"
-timeout = 30
+timeout = 120
 
 [behavior]
 auto_fix = true
@@ -100,6 +129,16 @@ color = true
 ```
 
 See `config/config.example.toml` for all options.
+
+### Shell completions
+
+```bash
+# Bash (add to ~/.bashrc)
+eval "$(npushell completions bash)"
+
+# Zsh (add to ~/.zshrc)
+eval "$(npushell completions zsh)"
+```
 
 ## How it works (technical)
 
