@@ -76,6 +76,13 @@ enum Commands {
 
     /// Set up npushell: create config and install shell hooks
     Init,
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 fn main() {
@@ -117,6 +124,12 @@ fn main() {
             handle_init(&config, &client);
         }
 
+        Some(Commands::Completions { shell: shell_type }) => {
+            use clap::CommandFactory;
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell_type, &mut cmd, "npushell", &mut std::io::stdout());
+        }
+
         None => {
             if cli.query.is_empty() {
                 // No subcommand and no query: print help
@@ -126,7 +139,7 @@ fn main() {
             } else {
                 // Check if the first word looks like a misspelled subcommand
                 let first = &cli.query[0];
-                let subcommands = ["fix", "explain", "suggest", "ask", "doctor", "config", "init"];
+                let subcommands = ["fix", "explain", "suggest", "ask", "doctor", "config", "init", "completions"];
                 if let Some(suggestion) = find_similar(first, &subcommands) {
                     eprintln!(
                         "Unknown subcommand '{}'. Did you mean '{}'?\n",
@@ -174,40 +187,57 @@ fn handle_fix(
     shell: &str,
     pid: u32,
 ) {
+    let suggestion_path = format!("/tmp/npushell-suggestion.{}", pid);
+    let lock_path = format!("/tmp/npushell-fix.{}.lock", pid);
+
+    // Skip if suggestion already pending or fix already in-flight
+    if std::path::Path::new(&suggestion_path).exists() || std::path::Path::new(&lock_path).exists()
+    {
+        return;
+    }
+
+    // Create lock file
+    std::fs::write(&lock_path, "").ok();
+
     let history = read_recent_history(_config.behavior.max_history_context);
     let os_ctx = get_os_context();
     let (sys, usr) = fix_prompt(command, exit_code, shell, &os_ctx, &history);
 
-    if let Ok(response) = client.complete(&sys, &usr, 150) {
-        let cleaned = strip_markdown(&response);
-        let mut lines = cleaned.lines();
-        let cmd = lines.next().unwrap_or("").to_string();
-        let explanation = lines.collect::<Vec<_>>().join("\n");
+    match client.complete(&sys, &usr, 150) {
+        Ok(response) => {
+            let cleaned = strip_markdown(&response);
+            let mut lines = cleaned.lines();
+            let cmd = lines.next().unwrap_or("").to_string();
+            let explanation = lines.collect::<Vec<_>>().join("\n");
 
-        // Write suggestion file (for precmd fallback)
-        let path = format!("/tmp/npushell-suggestion.{}", pid);
-        let content = format!("COMMAND:{}\nEXPLANATION:{}", cmd, explanation);
-        std::fs::write(&path, content).ok();
+            // Write suggestion file (for precmd fallback)
+            let content = format!("COMMAND:{}\nEXPLANATION:{}", cmd, explanation);
+            std::fs::write(&suggestion_path, content).ok();
 
-        // Also print directly to /dev/tty so it appears immediately,
-        // even if the user hasn't pressed Enter yet
-        if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty") {
-            use std::io::Write;
-            let _ = write!(tty, "\r\n");
-            let _ = write!(
-                tty,
-                "\x1b[1;36m npushell\x1b[0m \x1b[2m\u{2500} suggested fix:\x1b[0m\r\n"
-            );
-            let _ = write!(tty, "  \x1b[1;32m$ {}\x1b[0m\r\n", cmd);
-            if !explanation.is_empty() {
-                let _ = write!(tty, "  \x1b[2m{}\x1b[0m\r\n", explanation);
+            // Also print directly to /dev/tty so it appears immediately,
+            // even if the user hasn't pressed Enter yet
+            if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty") {
+                use std::io::Write;
+                let _ = write!(tty, "\r\n");
+                let _ = write!(
+                    tty,
+                    "\x1b[1;36m npushell\x1b[0m \x1b[2m\u{2500} suggested fix:\x1b[0m\r\n"
+                );
+                let _ = write!(tty, "  \x1b[1;32m$ {}\x1b[0m\r\n", cmd);
+                if !explanation.is_empty() {
+                    let _ = write!(tty, "  \x1b[2m{}\x1b[0m\r\n", explanation);
+                }
+                let _ = write!(
+                    tty,
+                    "\x1b[2m  (press Enter to see prompt)\x1b[0m\r\n"
+                );
             }
-            let _ = write!(
-                tty,
-                "\x1b[2m  (press Enter to see prompt)\x1b[0m\r\n"
-            );
         }
+        Err(_) => {}
     }
+
+    // Clean up lock file
+    std::fs::remove_file(&lock_path).ok();
 }
 
 fn handle_explain(config: &Config, client: &CopilotClient, command: &str) {
