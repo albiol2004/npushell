@@ -125,15 +125,14 @@ fn main() {
 }
 
 fn handle_fix(
-    config: &Config,
+    _config: &Config,
     client: &CopilotClient,
     command: &str,
     exit_code: i32,
     shell: &str,
     pid: u32,
 ) {
-    // Background mode: never print to stdout/stderr
-    let history = read_recent_history(config.behavior.max_history_context);
+    let history = read_recent_history(_config.behavior.max_history_context);
     let os_ctx = get_os_context();
     let (sys, usr) = fix_prompt(command, exit_code, shell, &os_ctx, &history);
 
@@ -142,9 +141,29 @@ fn handle_fix(
         let cmd = lines.next().unwrap_or("").to_string();
         let explanation = lines.collect::<Vec<_>>().join("\n");
 
+        // Write suggestion file (for precmd fallback)
         let path = format!("/tmp/npushell-suggestion.{}", pid);
         let content = format!("COMMAND:{}\nEXPLANATION:{}", cmd, explanation);
         std::fs::write(&path, content).ok();
+
+        // Also print directly to /dev/tty so it appears immediately,
+        // even if the user hasn't pressed Enter yet
+        if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty") {
+            use std::io::Write;
+            let _ = write!(tty, "\r\n");
+            let _ = write!(
+                tty,
+                "\x1b[1;36m npushell\x1b[0m \x1b[2m\u{2500} suggested fix:\x1b[0m\r\n"
+            );
+            let _ = write!(tty, "  \x1b[1;32m$ {}\x1b[0m\r\n", cmd);
+            if !explanation.is_empty() {
+                let _ = write!(tty, "  \x1b[2m{}\x1b[0m\r\n", explanation);
+            }
+            let _ = write!(
+                tty,
+                "\x1b[2m  (press Enter to see prompt)\x1b[0m\r\n"
+            );
+        }
     }
 }
 

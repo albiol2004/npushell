@@ -120,7 +120,14 @@ pub fn get_os_context() -> String {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
-    format!("OS: {}, Shell: {}, Arch: {}", pretty_name, shell, arch)
+    let user = env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+    let home = env::var("HOME").unwrap_or_else(|_| "unknown".to_string());
+    let pwd = env::var("PWD").unwrap_or_else(|_| ".".to_string());
+
+    format!(
+        "OS: {}, Shell: {}, Arch: {}, User: {}, Home: {}, CWD: {}",
+        pretty_name, shell, arch, user, home, pwd
+    )
 }
 
 fn read_os_pretty_name() -> Option<String> {
