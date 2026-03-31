@@ -54,9 +54,10 @@ __npushell_precmd() {
     fi
 
     # 2. If the last command failed, spawn background fix
-    if [[ $exit_code -ne 0 && -n "$__npushell_last_command" ]]; then
-        # Don't try to fix our own suggestion prompts or very short commands
-        if [[ "$__npushell_last_command" != npushell* && ${#__npushell_last_command} -gt 1 ]]; then
+    # Skip signal exits: 130=Ctrl+C, 137=SIGKILL, 141=SIGPIPE, 143=SIGTERM, 126=not executable, 127=not found is OK to fix
+    if [[ $exit_code -ne 0 && $exit_code -ne 130 && $exit_code -ne 137 && $exit_code -ne 141 && $exit_code -ne 143 && $exit_code -ne 126 && -n "$__npushell_last_command" ]]; then
+        # Don't try to fix our own commands or very short commands
+        if [[ "$__npushell_last_command" != npushell* && "$__npushell_last_command" != npu* && ${#__npushell_last_command} -gt 1 ]]; then
             npushell fix \
                 --command "$__npushell_last_command" \
                 --exit-code "$exit_code" \

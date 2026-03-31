@@ -29,6 +29,7 @@ impl CopilotClient {
         &self,
         system_prompt: &str,
         user_prompt: &str,
+        max_tokens: u32,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let url = format!("{}{}/chat/completions", self.endpoint, self.api_path);
 
@@ -39,7 +40,7 @@ impl CopilotClient {
                 { "role": "user", "content": user_prompt },
             ],
             "temperature": 0.3,
-            "max_tokens": 1024,
+            "max_tokens": max_tokens,
         });
 
         let response = self
@@ -71,6 +72,7 @@ impl CopilotClient {
         &self,
         system_prompt: &str,
         user_prompt: &str,
+        max_tokens: u32,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let url = format!("{}{}/chat/completions", self.endpoint, self.api_path);
 
@@ -81,7 +83,7 @@ impl CopilotClient {
                 { "role": "user", "content": user_prompt },
             ],
             "temperature": 0.3,
-            "max_tokens": 1024,
+            "max_tokens": max_tokens,
             "stream": true,
         });
 

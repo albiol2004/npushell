@@ -17,7 +17,8 @@ use prompts::{ask_prompt, explain_prompt, fix_prompt, get_os_context, suggest_pr
     name = "npushell",
     version,
     about = "NPU-powered shell copilot",
-    arg_required_else_help = false
+    arg_required_else_help = false,
+    infer_subcommands = true
 )]
 struct Cli {
     #[command(subcommand)]
@@ -116,12 +117,46 @@ fn main() {
                 Cli::command().print_help().ok();
                 println!();
             } else {
+                // Check if the first word looks like a misspelled subcommand
+                let first = &cli.query[0];
+                let subcommands = ["fix", "explain", "suggest", "ask", "doctor", "config"];
+                if let Some(suggestion) = find_similar(first, &subcommands) {
+                    eprintln!(
+                        "Unknown subcommand '{}'. Did you mean '{}'?\n",
+                        first, suggestion
+                    );
+                    eprintln!("To ask a question, use: npushell ask \"{}\"", cli.query.join(" "));
+                    std::process::exit(1);
+                }
                 // Implicit ask mode
                 let question = cli.query.join(" ");
                 handle_ask(&config, &client, &question);
             }
         }
     }
+}
+
+/// Strip markdown formatting from LLM output (backticks, code blocks)
+fn strip_markdown(text: &str) -> String {
+    let mut result = String::new();
+    let mut in_code_block = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            result.push_str(line);
+        } else {
+            // Strip inline backticks
+            result.push_str(&line.replace('`', ""));
+        }
+        result.push('\n');
+    }
+
+    result.trim().to_string()
 }
 
 fn handle_fix(
@@ -136,8 +171,9 @@ fn handle_fix(
     let os_ctx = get_os_context();
     let (sys, usr) = fix_prompt(command, exit_code, shell, &os_ctx, &history);
 
-    if let Ok(response) = client.complete(&sys, &usr) {
-        let mut lines = response.lines();
+    if let Ok(response) = client.complete(&sys, &usr, 150) {
+        let cleaned = strip_markdown(&response);
+        let mut lines = cleaned.lines();
         let cmd = lines.next().unwrap_or("").to_string();
         let explanation = lines.collect::<Vec<_>>().join("\n");
 
@@ -177,7 +213,7 @@ fn handle_explain(config: &Config, client: &CopilotClient, command: &str) {
         println!("\nExplanation:\n");
     }
 
-    match client.complete_streaming(&sys, &usr) {
+    match client.complete_streaming(&sys, &usr, 512) {
         Ok(_) => println!(),
         Err(e) => eprintln!("Error: {}", e),
     }
@@ -193,7 +229,7 @@ fn handle_suggest(config: &Config, client: &CopilotClient, description: &str) {
         print!("\nSuggestion: ");
     }
 
-    match client.complete_streaming(&sys, &usr) {
+    match client.complete_streaming(&sys, &usr, 200) {
         Ok(_) => println!(),
         Err(e) => eprintln!("Error: {}", e),
     }
@@ -204,7 +240,7 @@ fn handle_ask(_config: &Config, client: &CopilotClient, question: &str) {
     let (sys, usr) = ask_prompt(question, &os_ctx);
 
     println!();
-    match client.complete_streaming(&sys, &usr) {
+    match client.complete_streaming(&sys, &usr, 1024) {
         Ok(_) => println!(),
         Err(e) => eprintln!("Error: {}", e),
     }
@@ -238,6 +274,49 @@ fn handle_doctor(config: &Config, client: &CopilotClient) {
 
     println!();
     config.display();
+}
+
+/// Find a similar string from candidates using edit distance.
+/// Returns Some if the best match is within 2 edits.
+fn find_similar<'a>(input: &str, candidates: &[&'a str]) -> Option<&'a str> {
+    let input_lower = input.to_lowercase();
+    let mut best: Option<(&str, usize)> = None;
+
+    for &candidate in candidates {
+        if input_lower == candidate {
+            return None; // Exact match, not a typo
+        }
+        let dist = edit_distance(&input_lower, candidate);
+        if dist <= 2 {
+            if best.is_none() || dist < best.unwrap().1 {
+                best = Some((candidate, dist));
+            }
+        }
+    }
+
+    best.map(|(s, _)| s)
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+
+    for i in 0..=a.len() {
+        dp[i][0] = i;
+    }
+    for j in 0..=b.len() {
+        dp[0][j] = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+        }
+    }
+    dp[a.len()][b.len()]
 }
 
 fn check_hook_file(shell_name: &str, rc_file: &str) {

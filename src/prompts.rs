@@ -31,7 +31,9 @@ pub fn fix_prompt(
 pub fn explain_prompt(command: &str, os_context: &str) -> (String, String) {
     let system = "You are a shell command expert. Explain what the given command does \
         concisely. Break down each flag and argument. If help text from the command is \
-        provided, use it to give accurate information about custom or less-known binaries."
+        provided, use it to give accurate information about custom or less-known binaries. \
+        IMPORTANT: Reply in plain text only. Do NOT use markdown formatting, tables, headers, \
+        or backticks. Use simple indentation and dashes for lists."
         .to_string();
 
     let help_text = capture_help_text(command);
@@ -74,8 +76,8 @@ fn capture_help_text(command: &str) -> Option<String> {
 /// Build system and user prompts for the `suggest` subcommand.
 pub fn suggest_prompt(description: &str, os_context: &str) -> (String, String) {
     let system = "You are a shell command expert. Suggest a command that accomplishes \
-        the user's goal. Reply with EXACTLY two lines: the first line is ONLY the command, \
-        the second line is a brief explanation."
+        the user's goal. Reply with EXACTLY two lines: the first line is ONLY the command \
+        (no backticks), the second line is a brief explanation. Do NOT use markdown."
         .to_string();
 
     let user = format!("{}\n\n{}", description, os_context);
@@ -86,7 +88,8 @@ pub fn suggest_prompt(description: &str, os_context: &str) -> (String, String) {
 /// Build system and user prompts for the `ask` subcommand.
 pub fn ask_prompt(question: &str, os_context: &str) -> (String, String) {
     let system = "You are a knowledgeable shell and Linux expert. Answer the user's \
-        question concisely, providing commands when relevant."
+        question concisely, providing commands when relevant. Reply in plain text only. \
+        Do NOT use markdown formatting, tables, headers, or backticks."
         .to_string();
 
     let user = format!("{}\n\n{}", question, os_context);
