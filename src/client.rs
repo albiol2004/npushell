@@ -1,5 +1,6 @@
 use crate::config::ApiConfig;
 use serde_json::json;
+use std::io::{BufRead, BufReader, Write};
 use std::time::Duration;
 
 pub struct CopilotClient {
@@ -62,6 +63,70 @@ impl CopilotClient {
             .ok_or("unexpected API response: missing choices[0].message.content")?;
 
         Ok(content.to_string())
+    }
+
+    /// Stream a completion, printing tokens to stdout as they arrive.
+    /// Returns the full accumulated response.
+    pub fn complete_streaming(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let url = format!("{}{}/chat/completions", self.endpoint, self.api_path);
+
+        let body = json!({
+            "model": self.model,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_prompt },
+            ],
+            "temperature": 0.3,
+            "max_tokens": 1024,
+            "stream": true,
+        });
+
+        let response = self
+            .http
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().unwrap_or_default();
+            return Err(format!("API request failed ({}): {}", status, text).into());
+        }
+
+        let reader = BufReader::new(response);
+        let mut full_response = String::new();
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+
+        for line in reader.lines() {
+            let line = line?;
+            let Some(data) = line.strip_prefix("data: ") else {
+                continue;
+            };
+
+            if data == "[DONE]" {
+                break;
+            }
+
+            if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
+                if let Some(content) = chunk["choices"]
+                    .get(0)
+                    .and_then(|c| c["delta"]["content"].as_str())
+                {
+                    full_response.push_str(content);
+                    write!(out, "{}", content)?;
+                    out.flush()?;
+                }
+            }
+        }
+
+        writeln!(out)?;
+        Ok(full_response)
     }
 
     /// Check if the API endpoint is reachable.

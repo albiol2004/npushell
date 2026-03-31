@@ -1,6 +1,7 @@
 mod client;
 mod config;
 mod history;
+#[allow(dead_code)]
 mod output;
 mod prompts;
 
@@ -9,7 +10,6 @@ use clap::{Parser, Subcommand};
 use client::CopilotClient;
 use config::Config;
 use history::read_recent_history;
-use output::{print_explanation, print_response, print_suggestion};
 use prompts::{ask_prompt, explain_prompt, fix_prompt, get_os_context, suggest_prompt};
 
 #[derive(Parser)]
@@ -152,8 +152,14 @@ fn handle_explain(config: &Config, client: &CopilotClient, command: &str) {
     let os_ctx = get_os_context();
     let (sys, usr) = explain_prompt(command, &os_ctx);
 
-    match client.complete(&sys, &usr) {
-        Ok(response) => print_explanation(&response, config.ui.color),
+    if config.ui.color {
+        println!("\n{}\n", output::bold(&output::colored("Explanation:", "yellow")));
+    } else {
+        println!("\nExplanation:\n");
+    }
+
+    match client.complete_streaming(&sys, &usr) {
+        Ok(_) => println!(),
         Err(e) => eprintln!("Error: {}", e),
     }
 }
@@ -162,23 +168,25 @@ fn handle_suggest(config: &Config, client: &CopilotClient, description: &str) {
     let os_ctx = get_os_context();
     let (sys, usr) = suggest_prompt(description, &os_ctx);
 
-    match client.complete(&sys, &usr) {
-        Ok(response) => {
-            let mut lines = response.lines();
-            let cmd = lines.next().unwrap_or("");
-            let explanation = lines.collect::<Vec<_>>().join("\n");
-            print_suggestion(cmd, &explanation, config.ui.color);
-        }
+    if config.ui.color {
+        print!("\n{} ", output::bold(&output::colored("Suggestion:", "green")));
+    } else {
+        print!("\nSuggestion: ");
+    }
+
+    match client.complete_streaming(&sys, &usr) {
+        Ok(_) => println!(),
         Err(e) => eprintln!("Error: {}", e),
     }
 }
 
-fn handle_ask(config: &Config, client: &CopilotClient, question: &str) {
+fn handle_ask(_config: &Config, client: &CopilotClient, question: &str) {
     let os_ctx = get_os_context();
     let (sys, usr) = ask_prompt(question, &os_ctx);
 
-    match client.complete(&sys, &usr) {
-        Ok(response) => print_response(&response, config.ui.color),
+    println!();
+    match client.complete_streaming(&sys, &usr) {
+        Ok(_) => println!(),
         Err(e) => eprintln!("Error: {}", e),
     }
 }
