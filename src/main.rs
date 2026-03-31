@@ -73,6 +73,9 @@ enum Commands {
 
     /// Show current configuration
     Config,
+
+    /// Set up npushell: create config and install shell hooks
+    Init,
 }
 
 fn main() {
@@ -110,6 +113,10 @@ fn main() {
             config.display();
         }
 
+        Some(Commands::Init) => {
+            handle_init(&config, &client);
+        }
+
         None => {
             if cli.query.is_empty() {
                 // No subcommand and no query: print help
@@ -119,7 +126,7 @@ fn main() {
             } else {
                 // Check if the first word looks like a misspelled subcommand
                 let first = &cli.query[0];
-                let subcommands = ["fix", "explain", "suggest", "ask", "doctor", "config"];
+                let subcommands = ["fix", "explain", "suggest", "ask", "doctor", "config", "init"];
                 if let Some(suggestion) = find_similar(first, &subcommands) {
                     eprintln!(
                         "Unknown subcommand '{}'. Did you mean '{}'?\n",
@@ -244,6 +251,75 @@ fn handle_ask(_config: &Config, client: &CopilotClient, question: &str) {
         Ok(_) => println!(),
         Err(e) => eprintln!("Error: {}", e),
     }
+}
+
+fn handle_init(config: &Config, client: &CopilotClient) {
+    use std::io::{self, BufRead, Write};
+
+    println!("npushell init");
+    println!("=============\n");
+
+    // 1. Create config file if it doesn't exist
+    let config_path = Config::config_path();
+    print!("Config file... ");
+    if config_path.exists() {
+        println!("already exists at {}", config_path.display());
+    } else {
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let example = include_str!("../config/config.example.toml");
+        match std::fs::write(&config_path, example) {
+            Ok(()) => println!("created at {}", config_path.display()),
+            Err(e) => println!("FAILED ({})", e),
+        }
+    }
+
+    // 2. Detect shell and install hooks
+    let shell = std::env::var("SHELL").unwrap_or_default();
+    let (rc_file, hook_file) = if shell.ends_with("zsh") {
+        (".zshrc", "hooks.zsh")
+    } else {
+        (".bashrc", "hooks.bash")
+    };
+
+    let home = dirs::home_dir().expect("cannot determine home directory");
+    let rc_path = home.join(rc_file);
+    let data_dir = home.join(".local/share/npushell");
+    let source_line = format!("source {}/{}", data_dir.display(), hook_file);
+
+    print!("Shell hooks (~/{})... ", rc_file);
+    if rc_path.exists() {
+        let contents = std::fs::read_to_string(&rc_path).unwrap_or_default();
+        if contents.contains("npushell") {
+            println!("already installed");
+        } else {
+            print!("not found. Add hook to ~/{}? [Y/n] ", rc_file);
+            io::stdout().flush().ok();
+            let mut answer = String::new();
+            io::stdin().lock().read_line(&mut answer).ok();
+            if answer.trim().is_empty() || answer.trim().to_lowercase().starts_with('y') {
+                let addition = format!("\n# npushell - NPU-powered shell copilot\n{}\n", source_line);
+                match std::fs::OpenOptions::new().append(true).open(&rc_path) {
+                    Ok(mut f) => {
+                        let _ = f.write_all(addition.as_bytes());
+                        println!("  Added to ~/{}", rc_file);
+                    }
+                    Err(e) => println!("  FAILED ({})", e),
+                }
+            } else {
+                println!("  Skipped. Add manually: {}", source_line);
+            }
+        }
+    } else {
+        println!("~/{} not found, skipping", rc_file);
+    }
+
+    // 3. Run doctor
+    println!();
+    handle_doctor(config, client);
+
+    println!("\nSetup complete! Restart your shell or run: source ~/{}", rc_file);
 }
 
 fn handle_doctor(config: &Config, client: &CopilotClient) {

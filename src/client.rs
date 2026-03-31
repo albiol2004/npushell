@@ -1,6 +1,8 @@
 use crate::config::ApiConfig;
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 pub struct CopilotClient {
@@ -100,10 +102,31 @@ impl CopilotClient {
             return Err(format!("API request failed ({}): {}", status, text).into());
         }
 
+        // Start spinner while waiting for first token
+        let spinning = Arc::new(AtomicBool::new(true));
+        let spinning_clone = spinning.clone();
+        let spinner_handle = std::thread::spawn(move || {
+            let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+            let mut i = 0;
+            let stderr = std::io::stderr();
+            while spinning_clone.load(Ordering::Relaxed) {
+                let mut err = stderr.lock();
+                let _ = write!(err, "\r\x1b[2m{} thinking...\x1b[0m", frames[i % frames.len()]);
+                let _ = err.flush();
+                i += 1;
+                std::thread::sleep(Duration::from_millis(80));
+            }
+            // Clear spinner line
+            let mut err = stderr.lock();
+            let _ = write!(err, "\r\x1b[2K");
+            let _ = err.flush();
+        });
+
         let reader = BufReader::new(response);
         let mut full_response = String::new();
         let stdout = std::io::stdout();
         let mut out = stdout.lock();
+        let mut spinner_handle = Some(spinner_handle);
 
         for line in reader.lines() {
             let line = line?;
@@ -120,11 +143,20 @@ impl CopilotClient {
                     .get(0)
                     .and_then(|c| c["delta"]["content"].as_str())
                 {
+                    if let Some(handle) = spinner_handle.take() {
+                        spinning.store(false, Ordering::Relaxed);
+                        let _ = handle.join();
+                    }
                     full_response.push_str(content);
                     write!(out, "{}", content)?;
                     out.flush()?;
                 }
             }
+        }
+
+        if let Some(handle) = spinner_handle.take() {
+            spinning.store(false, Ordering::Relaxed);
+            let _ = handle.join();
         }
 
         writeln!(out)?;
