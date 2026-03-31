@@ -203,37 +203,34 @@ fn handle_fix(
     let os_ctx = get_os_context();
     let (sys, usr) = fix_prompt(command, exit_code, shell, &os_ctx, &history);
 
-    match client.complete(&sys, &usr, 150) {
-        Ok(response) => {
-            let cleaned = strip_markdown(&response);
-            let mut lines = cleaned.lines();
-            let cmd = lines.next().unwrap_or("").to_string();
-            let explanation = lines.collect::<Vec<_>>().join("\n");
+    if let Ok(response) = client.complete(&sys, &usr, 150) {
+        let cleaned = strip_markdown(&response);
+        let mut lines = cleaned.lines();
+        let cmd = lines.next().unwrap_or("").to_string();
+        let explanation = lines.collect::<Vec<_>>().join("\n");
 
-            // Write suggestion file (for precmd fallback)
-            let content = format!("COMMAND:{}\nEXPLANATION:{}", cmd, explanation);
-            std::fs::write(&suggestion_path, content).ok();
+        // Write suggestion file (for precmd fallback)
+        let content = format!("COMMAND:{}\nEXPLANATION:{}", cmd, explanation);
+        std::fs::write(&suggestion_path, content).ok();
 
-            // Also print directly to /dev/tty so it appears immediately,
-            // even if the user hasn't pressed Enter yet
-            if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty") {
-                use std::io::Write;
-                let _ = write!(tty, "\r\n");
-                let _ = write!(
-                    tty,
-                    "\x1b[1;36m npushell\x1b[0m \x1b[2m\u{2500} suggested fix:\x1b[0m\r\n"
-                );
-                let _ = write!(tty, "  \x1b[1;32m$ {}\x1b[0m\r\n", cmd);
-                if !explanation.is_empty() {
-                    let _ = write!(tty, "  \x1b[2m{}\x1b[0m\r\n", explanation);
-                }
-                let _ = write!(
-                    tty,
-                    "\x1b[2m  (press Enter to see prompt)\x1b[0m\r\n"
-                );
+        // Also print directly to /dev/tty so it appears immediately,
+        // even if the user hasn't pressed Enter yet
+        if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty") {
+            use std::io::Write;
+            let _ = write!(tty, "\r\n");
+            let _ = write!(
+                tty,
+                "\x1b[1;36m npushell\x1b[0m \x1b[2m\u{2500} suggested fix:\x1b[0m\r\n"
+            );
+            let _ = write!(tty, "  \x1b[1;32m$ {}\x1b[0m\r\n", cmd);
+            if !explanation.is_empty() {
+                let _ = write!(tty, "  \x1b[2m{}\x1b[0m\r\n", explanation);
             }
+            let _ = write!(
+                tty,
+                "\x1b[2m  (press Enter to see prompt)\x1b[0m\r\n"
+            );
         }
-        Err(_) => {}
     }
 
     // Clean up lock file
@@ -393,16 +390,15 @@ fn find_similar<'a>(input: &str, candidates: &[&'a str]) -> Option<&'a str> {
             return None; // Exact match, not a typo
         }
         let dist = edit_distance(&input_lower, candidate);
-        if dist <= 2 {
-            if best.is_none() || dist < best.unwrap().1 {
-                best = Some((candidate, dist));
-            }
+        if dist <= 2 && (best.is_none() || dist < best.unwrap().1) {
+            best = Some((candidate, dist));
         }
     }
 
     best.map(|(s, _)| s)
 }
 
+#[allow(clippy::needless_range_loop)]
 fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
