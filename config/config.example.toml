@@ -4,10 +4,12 @@
 [api]
 # OpenAI-compatible API endpoint (lemonade-server, ollama, etc.)
 endpoint = "http://localhost:8000"
+# API path prefix ("/v1" for most servers, "/api/v1" for lemonade-server)
+api_path = "/v1"
 # Model name to use
 model = "default"
 # Request timeout in seconds
-timeout = 30
+timeout = 120
 
 [behavior]
 # Automatically suggest fixes for failed commands

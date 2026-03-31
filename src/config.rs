@@ -15,6 +15,8 @@ pub struct ApiConfig {
     pub endpoint: String,
     pub model: String,
     pub timeout: u64,
+    /// API path prefix (e.g. "/v1" or "/api/v1")
+    pub api_path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,7 +38,8 @@ impl Default for ApiConfig {
         Self {
             endpoint: "http://localhost:8000".to_string(),
             model: "default".to_string(),
-            timeout: 30,
+            timeout: 120,
+            api_path: "/v1".to_string(),
         }
     }
 }
@@ -90,6 +93,7 @@ impl Config {
         println!();
         println!("[api]");
         println!("  endpoint = \"{}\"", self.api.endpoint);
+        println!("  api_path = \"{}\"", self.api.api_path);
         println!("  model    = \"{}\"", self.api.model);
         println!("  timeout  = {}s", self.api.timeout);
         println!();

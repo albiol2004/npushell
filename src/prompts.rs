@@ -30,12 +30,45 @@ pub fn fix_prompt(
 /// Build system and user prompts for the `explain` subcommand.
 pub fn explain_prompt(command: &str, os_context: &str) -> (String, String) {
     let system = "You are a shell command expert. Explain what the given command does \
-        concisely. Break down each flag and argument."
+        concisely. Break down each flag and argument. If help text from the command is \
+        provided, use it to give accurate information about custom or less-known binaries."
         .to_string();
 
-    let user = format!("Command: {}\n\n{}", command, os_context);
+    let help_text = capture_help_text(command);
+    let mut user = format!("Command: {}\n\n{}", command, os_context);
+
+    if let Some(help) = help_text {
+        user.push_str(&format!("\n\nHelp output from the binary:\n{}", help));
+    }
 
     (system, user)
+}
+
+/// Try to capture --help output for the first binary in a command string.
+fn capture_help_text(command: &str) -> Option<String> {
+    let binary = command.split_whitespace().next()?;
+
+    // Try --help first, then -h
+    for flag in &["--help", "-h"] {
+        if let Ok(output) = std::process::Command::new(binary)
+            .arg(flag)
+            .output()
+        {
+            let text = if !output.stdout.is_empty() {
+                String::from_utf8_lossy(&output.stdout).to_string()
+            } else {
+                String::from_utf8_lossy(&output.stderr).to_string()
+            };
+
+            if !text.is_empty() {
+                // Truncate to avoid blowing up the prompt
+                let truncated: String = text.chars().take(2000).collect();
+                return Some(truncated);
+            }
+        }
+    }
+
+    None
 }
 
 /// Build system and user prompts for the `suggest` subcommand.

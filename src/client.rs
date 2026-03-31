@@ -5,6 +5,7 @@ use std::time::Duration;
 pub struct CopilotClient {
     http: reqwest::blocking::Client,
     endpoint: String,
+    api_path: String,
     model: String,
 }
 
@@ -18,6 +19,7 @@ impl CopilotClient {
         Self {
             http,
             endpoint: config.endpoint.clone(),
+            api_path: config.api_path.clone(),
             model: config.model.clone(),
         }
     }
@@ -27,7 +29,7 @@ impl CopilotClient {
         system_prompt: &str,
         user_prompt: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let url = format!("{}/v1/chat/completions", self.endpoint);
+        let url = format!("{}{}/chat/completions", self.endpoint, self.api_path);
 
         let body = json!({
             "model": self.model,
@@ -64,7 +66,7 @@ impl CopilotClient {
 
     /// Check if the API endpoint is reachable.
     pub fn health_check(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let url = format!("{}/v1/models", self.endpoint);
+        let url = format!("{}{}/models", self.endpoint, self.api_path);
         let response = self.http.get(&url).send()?;
         if response.status().is_success() {
             Ok(())
