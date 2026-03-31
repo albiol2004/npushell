@@ -1,3 +1,233 @@
+mod client;
+mod config;
+mod history;
+mod output;
+mod prompts;
+
+use clap::{Parser, Subcommand};
+
+use client::CopilotClient;
+use config::Config;
+use history::read_recent_history;
+use output::{print_explanation, print_response, print_suggestion};
+use prompts::{ask_prompt, explain_prompt, fix_prompt, get_os_context, suggest_prompt};
+
+#[derive(Parser)]
+#[command(
+    name = "npushell",
+    version,
+    about = "NPU-powered shell copilot",
+    arg_required_else_help = false
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    /// Free-form query (when no subcommand is used)
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    query: Vec<String>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Analyze a failed command and suggest a fix (called by shell hooks)
+    Fix {
+        /// The command that failed
+        #[arg(long)]
+        command: String,
+
+        /// The exit code of the failed command
+        #[arg(long)]
+        exit_code: i32,
+
+        /// The current shell (bash, zsh, etc.)
+        #[arg(long)]
+        shell: String,
+
+        /// PID of the shell process
+        #[arg(long)]
+        pid: u32,
+    },
+
+    /// Explain what a command does
+    Explain {
+        /// The command to explain
+        command: String,
+    },
+
+    /// Suggest a command from a natural language description
+    Suggest {
+        /// What you want to accomplish
+        description: String,
+    },
+
+    /// Ask a free-form question
+    Ask {
+        /// Your question
+        question: String,
+    },
+
+    /// Check API connectivity and hook installation
+    Doctor,
+
+    /// Show current configuration
+    Config,
+}
+
 fn main() {
-    println!("Hello, world!");
+    let cli = Cli::parse();
+    let config = Config::load();
+    let client = CopilotClient::new(&config.api);
+
+    match cli.command {
+        Some(Commands::Fix {
+            command,
+            exit_code,
+            shell,
+            pid,
+        }) => {
+            handle_fix(&config, &client, &command, exit_code, &shell, pid);
+        }
+
+        Some(Commands::Explain { command }) => {
+            handle_explain(&config, &client, &command);
+        }
+
+        Some(Commands::Suggest { description }) => {
+            handle_suggest(&config, &client, &description);
+        }
+
+        Some(Commands::Ask { question }) => {
+            handle_ask(&config, &client, &question);
+        }
+
+        Some(Commands::Doctor) => {
+            handle_doctor(&config, &client);
+        }
+
+        Some(Commands::Config) => {
+            config.display();
+        }
+
+        None => {
+            if cli.query.is_empty() {
+                // No subcommand and no query: print help
+                use clap::CommandFactory;
+                Cli::command().print_help().ok();
+                println!();
+            } else {
+                // Implicit ask mode
+                let question = cli.query.join(" ");
+                handle_ask(&config, &client, &question);
+            }
+        }
+    }
+}
+
+fn handle_fix(
+    config: &Config,
+    client: &CopilotClient,
+    command: &str,
+    exit_code: i32,
+    shell: &str,
+    pid: u32,
+) {
+    // Background mode: never print to stdout/stderr
+    let history = read_recent_history(config.behavior.max_history_context);
+    let os_ctx = get_os_context();
+    let (sys, usr) = fix_prompt(command, exit_code, shell, &os_ctx, &history);
+
+    if let Ok(response) = client.complete(&sys, &usr) {
+        let mut lines = response.lines();
+        let cmd = lines.next().unwrap_or("").to_string();
+        let explanation = lines.collect::<Vec<_>>().join("\n");
+
+        let path = format!("/tmp/npushell-suggestion.{}", pid);
+        let content = format!("COMMAND:{}\nEXPLANATION:{}", cmd, explanation);
+        std::fs::write(&path, content).ok();
+    }
+}
+
+fn handle_explain(config: &Config, client: &CopilotClient, command: &str) {
+    let os_ctx = get_os_context();
+    let (sys, usr) = explain_prompt(command, &os_ctx);
+
+    match client.complete(&sys, &usr) {
+        Ok(response) => print_explanation(&response, config.ui.color),
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+
+fn handle_suggest(config: &Config, client: &CopilotClient, description: &str) {
+    let os_ctx = get_os_context();
+    let (sys, usr) = suggest_prompt(description, &os_ctx);
+
+    match client.complete(&sys, &usr) {
+        Ok(response) => {
+            let mut lines = response.lines();
+            let cmd = lines.next().unwrap_or("");
+            let explanation = lines.collect::<Vec<_>>().join("\n");
+            print_suggestion(cmd, &explanation, config.ui.color);
+        }
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+
+fn handle_ask(config: &Config, client: &CopilotClient, question: &str) {
+    let os_ctx = get_os_context();
+    let (sys, usr) = ask_prompt(question, &os_ctx);
+
+    match client.complete(&sys, &usr) {
+        Ok(response) => print_response(&response, config.ui.color),
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+
+fn handle_doctor(config: &Config, client: &CopilotClient) {
+    println!("npushell doctor");
+    println!("===============\n");
+
+    // Check API connectivity
+    print!("API endpoint ({})... ", config.api.endpoint);
+    match client.health_check() {
+        Ok(()) => println!("OK"),
+        Err(e) => println!("FAIL ({})", e),
+    }
+
+    // Check config file
+    let config_path = Config::config_path();
+    print!("Config file ({})... ", config_path.display());
+    if config_path.exists() {
+        println!("found");
+    } else {
+        println!("not found (using defaults)");
+    }
+
+    // Check shell hook installation
+    println!();
+    println!("Shell hook status:");
+    check_hook_file("bash", ".bashrc");
+    check_hook_file("zsh", ".zshrc");
+
+    println!();
+    config.display();
+}
+
+fn check_hook_file(shell_name: &str, rc_file: &str) {
+    if let Some(home) = dirs::home_dir() {
+        let path = home.join(rc_file);
+        if path.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                if contents.contains("npushell") {
+                    println!("  {}: hook installed", shell_name);
+                } else {
+                    println!("  {}: hook NOT installed in ~/{}", shell_name, rc_file);
+                }
+            } else {
+                println!("  {}: could not read ~/{}", shell_name, rc_file);
+            }
+        } else {
+            println!("  {}: ~/{} not found", shell_name, rc_file);
+        }
+    }
 }

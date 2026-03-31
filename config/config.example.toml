@@ -1,0 +1,22 @@
+# npushell configuration
+# Copy to ~/.config/npushell/config.toml
+
+[api]
+# OpenAI-compatible API endpoint (lemonade-server, ollama, etc.)
+endpoint = "http://localhost:8000"
+# Model name to use
+model = "default"
+# Request timeout in seconds
+timeout = 30
+
+[behavior]
+# Automatically suggest fixes for failed commands
+auto_fix = true
+# Ask for confirmation before running suggested commands
+confirm_before_run = true
+# Number of recent history lines to include as context
+max_history_context = 5
+
+[ui]
+# Enable colored output
+color = true
